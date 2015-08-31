@@ -232,7 +232,8 @@ class moteProbe(threading.Thread):
                                         with self.outputBufLock:
                                             if self.outputBuf:
                                                 outputToWrite = self.outputBuf.pop(0)
-                                                self.serial.write(outputToWrite)
+                                                byteCount = self.serial.write(outputToWrite)
+                                                log.info("Serial wrote byte count: {0}".format(byteCount))
                                     else:
                                         # dispatch
                                         dispatcher.send(
@@ -274,7 +275,15 @@ class moteProbe(threading.Thread):
         
         # frame with HDLC
         hdlcData = self.hdlc.hdlcify(data)
-        
-        # add to outputBuf
-        with self.outputBufLock:
-            self.outputBuf += [hdlcData]
+        log.info('Output data after HDLCify, len: {0}'.format(len(hdlcData)))
+        log.info('Output data after HDLCify: {0}'.format(u.formatStringBuf(hdlcData)))
+        if (len(hdlcData) > 50):
+            hdlcData1 = hdlcData[:50]
+            hdlcData2 = hdlcData[50:]
+            with self.outputBufLock:
+                self.outputBuf += [hdlcData1]
+                self.outputBuf += [hdlcData2]
+        else:
+            # add to outputBuf
+            with self.outputBufLock:
+                self.outputBuf += [hdlcData]
