@@ -57,11 +57,15 @@ def findSerialPorts():
                     serialports.append( (str(val[1]),BAUDRATE_GINA) )
                 elif val[0].find('ProlificSerial')>-1:
                     serialports.append( (str(val[1]),BAUDRATE_WSN430) )
+                elif val[0].find('USBSER')>-1:
+                    serialports.append( (str(val[1]),BAUDRATE_WSN430) )
+                # need another entry for SERCOMM, as in mathivanane repo?
     elif os.name=='posix':
         if platform.system() == 'Darwin':
             portMask = '/dev/tty.usbserial-*'
         else:
-            portMask = '/dev/ttyUSB*'
+            #portMask = '/dev/ttyUSB*'
+            portMask = '/dev/ttyACM*'
         serialports = [(s,BAUDRATE_GINA) for s in glob.glob(portMask)]
     
     # log
@@ -165,7 +169,7 @@ class moteProbe(threading.Thread):
                 
                 if   self.mode==self.MODE_SERIAL:
                     self.serial = serial.Serial(self.serialport,self.baudrate)
-                    self.serial.setDTR(0)
+                    self.serial.setDTR(1)
                     self.serial.setRTS(0)
                 elif self.mode==self.MODE_EMULATED:
                     self.serial = self.emulatedMote.bspUart
