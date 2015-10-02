@@ -28,16 +28,17 @@ print '\n'.join(banner)
 
 Help('''
 Usage:
-    scons [options] <rungui|runcli|runweb>
+    scons [options] <rungui|runcli|runcli2|runweb>
     scons copy-simfw
     scons <sdist|upload|sdist-native>
     scons unittests
     scons docs
    
 Targets:
-    rungui/runcli/runweb:
+    rungui/runcli/runcli2/runweb:
         Run OpenVisualizer with GUI, command line, or web interface,
-        respectively.
+        respectively. runcli2 is a refactored and hopefully more useful
+        command line.
         The application is run in the build/runui/ directory. Since it accesses
         your computer's network interfaces, it must be run as
         superuser/administrator.

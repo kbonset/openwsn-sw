@@ -165,6 +165,12 @@ cliEnv['HOSTOPT']    = None
 cliEnv['PORTOPT']    = None
 Alias('runcli', setupUiRunner(cliEnv, 'openVisualizerCli.py', []))
 
+cli2Env               = env.Clone()
+cli2Env['WAIT_ON_UI'] = True
+cli2Env['HOSTOPT']    = None
+cli2Env['PORTOPT']    = None
+Alias('runcli2', setupUiRunner(cli2Env, 'openVisualizerCli2.py', []))
+
 webEnv               = env.Clone()
 webdirs              = ['web_files']
 webEnv['WAIT_ON_UI'] = True
