@@ -217,6 +217,11 @@ class eventBusMonitor(object):
         
         # mac frame
         mac    = body
+        # Workaround frame control field parsing incorrctly in Wireshark.
+        # See comments in https://openwsn.atlassian.net/browse/FW-422.
+        if (mac[0] & 0x40 != 0x40):
+            log.debug('Setting frame control intra-pan to True')
+            mac[0] = mac[0] | 0x40
         mac   += u.calculateFCS(mac)
         
         return zep+mac
