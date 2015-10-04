@@ -41,6 +41,12 @@ class OpenVisualizerCli2(Cmd):
     itself may be a tuple where each element is an output line. The first 
     element is a summary, and subsequent elements provide details. See 
     help_cli() for an example.
+    
+    Attributes:
+       :motes:      List of connected motes
+       :activeMote: User-selected mote. Used as an implict target for commands
+                    so the user doesn't need to enter the mote ID for every
+                    command.
     """
         
     def __init__(self,app):
@@ -52,6 +58,8 @@ class OpenVisualizerCli2(Cmd):
         Cmd.__init__(self)
         self.prompt     = '> '
         self.intro      = '\nOpenVisualizer CLI\n\n\'help [cmd]\' for command list'
+        self.motes      = [mote(moteState) for moteState in self.app.moteStates]
+        self.activeMote = None
         
     #======================== public ==========================================
     
@@ -63,37 +71,64 @@ class OpenVisualizerCli2(Cmd):
             tb = traceback.format_exc()
             self.stdout.write('Command failed\n')
             self.stdout.write(tb)
+
+    def emptyline(self):
+        """Override to do nothing rather than repeat the last command, which
+        is counter-intuitive.
+        """
+        pass
     
     #======================== private =========================================
-
-    def _motelist(self):
-        """Returns list of 16-bit IDs for connected motes"""
-        motelist = []
-        for ms in self.app.moteStates:
-            addr = ms.getStateElem(moteState.moteState.ST_IDMANAGER).get16bAddr()
-            if addr:
-                motelist.append( ''.join(['%02x'%b for b in addr]) )
-            else:
-                motelist.append(ms.moteConnector.serialport)
-        return motelist
+                        
+    def _getDisplayId(self, mote):
+        """Returns a short ID for a mote, for display on the terminal."""
+        id = mote.get16bHexAddr()
+        if id == mote.UNKNOWN_ADDR:
+            id = '<' + mote.getSerialAddr() + '>'
+        return id
 
     #===== callbacks
     
     def do_mote(self, arg):
-        if arg == "list":
-            motes = self._motelist()
-            if motes:
-                for mote in self._motelist():
-                    self.stdout.write('{0}\n'.format(mote))
+        args = arg.split()
+        
+        if len(args) == 1 and args[0] == "list":
+            if self.motes:
+                self.stdout.write('\'*\' = DAG root\n')
+                for mote in self.motes:
+                    self.stdout.write('{0}{1}\n'.format('* ' if mote.isDagRoot() else '  ',
+                                                        self._getDisplayId(mote)))
             else:
                 self.stdout.write('No connected motes\n')
+
+        elif len(args) == 1 and args[0] == "root":
+            if self.activeMote:
+                if not self.activeMote.isDagRoot():
+                    self.activeMote.ms.triggerAction(moteState.moteState.TRIGGER_DAGROOT)
+                    self.prompt = self._getDisplayId(self.activeMote) + '> '
+                else:
+                    self.stdout.write('Not valid to unset DAG root status\n')
+            else:
+                self.stdout.write('Failed; must first select mote\n')
+                
+        elif len(args) == 2 and args[0] == "set":
+            foundId = False
+            for mote in self.motes:
+                if args[1] == mote.get16bHexAddr() and mote.isUsable():
+                    self.activeMote = mote
+                    foundId         = True
+                    self.prompt     = self._getDisplayId(mote) + '> '
+                    break
+            if not foundId:
+                self.stdout.write('mote-id not found or not usable\n')
+
         else:
             self.do_help('mote')
         
     def help_mote(self):
         return("mote", ("Mote list, active mote, and mote settings",
               "mote list          -- List connected motes",
-              "mote set <mode-id> -- Set the active connected mote"))
+              "mote set <mote-id> -- Set the active connected mote"))
 
     def do_help(self, arg):
         """Lists command name and description from help_xxx() methods.
@@ -133,6 +168,33 @@ class OpenVisualizerCli2(Cmd):
     def help_exit(self):
         return ("exit", "Exit OpenVisualizer CLI")
 
+#============================ mote ============================================
+
+class mote(object):
+    """Model for a mote. Provides application level semantics missing from
+    moteState. Would be appropriate to integrate this class into openVisualizerApp,
+    but that is a major change to the application structure.
+    """
+    UNKNOWN_ADDR = "Unknown"
+    
+    def __init__(self,moteState):
+        self.ms = moteState
+    
+    def get16bHexAddr(self):
+        """Returns a 2-byte hex string address in the form 'xxxx'."""
+        addr = self.ms.getStateElem(moteState.moteState.ST_IDMANAGER).get16bAddr()
+        return ''.join(['%02x'%b for b in addr]) if addr else self.UNKNOWN_ADDR
+        
+    def getSerialAddr(self):
+        return self.ms.moteConnector.serialport
+        
+    def isDagRoot(self):
+        """Returns True if this mote is RPL DAG root for the network."""
+        return self.ms.getStateElem(moteState.moteState.ST_IDMANAGER).isDAGroot
+        
+    def isUsable(self):
+        """Returns True if mote state indicates we can communicate with it."""
+        return self.get16bHexAddr() != self.UNKNOWN_ADDR
 
 #============================ main ============================================
 
