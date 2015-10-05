@@ -87,6 +87,7 @@ class RPL(eventBusClient.eventBusClient):
         self.dagRootEui64         = None
         self.sourceRoute          = SourceRoute.SourceRoute()
         self.latencyStats         = {}
+        self.showsInfoOnStdout    = True
     
     #======================== public ==========================================
     
@@ -265,7 +266,8 @@ class RPL(eventBusClient.eventBusClient):
         output               = '\n'.join(output)
         if log.isEnabledFor(logging.DEBUG):
             log.debug(output)
-        print output
+        if self.showsInfoOnStdout:
+            print output
         
         # if you get here, the DAO was parsed correctly
         

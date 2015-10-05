@@ -8,6 +8,7 @@
 import sys
 import os
 import traceback
+import types
 
 if __name__=="__main__":
     # Update pythonpath if running in in-tree development mode
@@ -18,7 +19,7 @@ if __name__=="__main__":
         pathHelper.updatePath()
 
 import logging
-log = logging.getLogger('openVisualizerCli2')
+log = logging.getLogger('openVisualizerCli')
 
 try:
     from openvisualizer.moteState import moteState
@@ -47,6 +48,8 @@ class OpenVisualizerCli2(Cmd):
        :activeMote: User-selected mote. Used as an implict target for commands
                     so the user doesn't need to enter the mote ID for every
                     command.
+       :link:       Dictionary of links to remote motes from the active 
+                    mote, where the key is the address of the remote.
     """
         
     def __init__(self,app):
@@ -60,6 +63,9 @@ class OpenVisualizerCli2(Cmd):
         self.intro      = '\nOpenVisualizer CLI\n\n\'help [cmd]\' for command list'
         self.motes      = [mote(moteState) for moteState in self.app.moteStates]
         self.activeMote = None
+        self.links      = {}
+        # Must turn off to avoid DAO messages, which may be frequent.
+        self.app.rpl.showsInfoOnStdout = False
         
     #======================== public ==========================================
     
@@ -86,6 +92,25 @@ class OpenVisualizerCli2(Cmd):
         if id == mote.UNKNOWN_ADDR:
             id = '<' + mote.getSerialAddr() + '>'
         return id
+        
+    def _updateLinks(self):
+        """Updates the contents for the 'links' attribute, for the active 
+        mote, from the moteState neighbors data.
+        """
+        self.links = {}
+        try:
+            nbrs = self.activeMote.ms.getStateElem(moteState.moteState.ST_NEIGHBORS).data
+            for row in nbrs:
+                if row.data:
+                    nbr  = row.data[0]
+                    addr = nbr['addr']
+                    if addr and addr.addr:
+                        addrStr = ''.join(["%.2x" % b for b in addr.addr[-2:]])
+                        self.links[addrStr] = nbr
+            log.info('Found {0} links for mote {1}'.format(len(self.links), 
+                                                           self.activeMote.get16bHexAddr()))
+        except ValueError:
+            log.exception('ValueError when reading neighbor list')
 
     #===== callbacks
     
@@ -107,9 +132,9 @@ class OpenVisualizerCli2(Cmd):
                     self.activeMote.ms.triggerAction(moteState.moteState.TRIGGER_DAGROOT)
                     self.prompt = self._getDisplayId(self.activeMote) + '> '
                 else:
-                    self.stdout.write('Not valid to unset DAG root status\n')
+                    self.stdout.write('No action; mote already is DAG root\n')
             else:
-                self.stdout.write('Failed; must first select mote\n')
+                self.stdout.write('No action; must first select mote\n')
                 
         elif len(args) == 2 and args[0] == "set":
             foundId = False
@@ -118,6 +143,7 @@ class OpenVisualizerCli2(Cmd):
                     self.activeMote = mote
                     foundId         = True
                     self.prompt     = self._getDisplayId(mote) + '> '
+                    self._updateLinks()
                     break
             if not foundId:
                 self.stdout.write('mote-id not found or not usable\n')
@@ -128,7 +154,76 @@ class OpenVisualizerCli2(Cmd):
     def help_mote(self):
         return("mote", ("Mote list, active mote, and mote settings",
               "mote list          -- List connected motes",
+              "mote root          -- Make the active mote the DAG root",
               "mote set <mote-id> -- Set the active connected mote"))
+              
+    def do_link(self, arg):
+        args = arg.split()
+
+        if len(args) >= 1 and args[0] == "list":
+            self._updateLinks()
+            if self.links:
+                for addr in self.links.keys():
+                    self.stdout.write(addr + '\n')
+            else:
+                self.stdout.write('No links found\n')
+            
+        elif len(args) == 2 and args[0] == "stats":
+            link = self.links[args[1]]
+            if link:
+                numTx    = link['numTx']
+                numTxACK = link['numTxACK']
+                par      = (numTxACK / float(numTx)) if numTx > 0 else 0
+                
+                self.stdout.write('  AllRX  RSS  UniTX  TXack   PAR\n')
+                self.stdout.write('  -----  ---  -----  -----  ----\n')
+                self.stdout.write('  {0:5d}  {1:3d}  {2:5d}  {3:5d}  {4:4.2f}\n'.format(
+                                                                     link['numRx'], 
+                                                                     link['rssi'].rssi,
+                                                                     numTx,
+                                                                     numTxACK,
+                                                                     par))
+            else:
+                self.stdout.write('link not found\n')
+        else:
+            self.do_help('link')
+        
+    def help_link(self):
+        return("link", ("Link list and stats for a link to the selected mote",
+              "link list          -- List linked motes",
+              "link stats <remote-id> [frequency]",
+              "                   -- Show statistics for the link to mote 'remote-id'.",
+              "                      Optionally, update the display every 'frequency' seconds",
+              "link stats off",
+              "link stats reset",
+              "",
+              "Legend for stats output:",
+              "   AllRX     RSS      UniTX    TXack    PAR  ",
+              "  -------  --------  -------  -------  ------",
+              "  All RX   RSS for   Unicast  ACKed    TX pkt",
+              "  packets  last RX   TX       unicast  ACK   ",
+              "           packet    packets  TX pkts  rate  "))
+              
+    def do_cli(self, arg):
+        args = arg.split()
+        
+        if args and args[0] == "stdout":
+            if len(args) == 1:
+                self.stdout.write('cli stdout is ' 
+                        + ('on\n' if self.app.rpl.showsInfoOnStdout else 'off\n'))
+            elif len(args) == 2 and args[1] == 'on':
+                self.app.rpl.showsInfoOnStdout = True
+            elif len(args) == 2 and args[1] == 'off':
+                self.app.rpl.showsInfoOnStdout = False
+            else:
+                self.do_help('cli')
+        else:
+            self.do_help('cli')
+        
+    def help_cli(self):
+        return("cli", ("CLI application settings",
+              "cli stdout [on|off] -- Enable/Disable messages to stdout from other",
+              "                       OpenVisualizer modules"))
 
     def do_help(self, arg):
         """Lists command name and description from help_xxx() methods.
@@ -178,7 +273,7 @@ class mote(object):
     UNKNOWN_ADDR = "Unknown"
     
     def __init__(self,moteState):
-        self.ms = moteState
+        self.ms      = moteState
     
     def get16bHexAddr(self):
         """Returns a 2-byte hex string address in the form 'xxxx'."""
@@ -195,6 +290,22 @@ class mote(object):
     def isUsable(self):
         """Returns True if mote state indicates we can communicate with it."""
         return self.get16bHexAddr() != self.UNKNOWN_ADDR
+        
+        
+class moteLink(object):
+    """A wireless link to a remote mote.
+    
+    Attributes:
+       :linkData:      Dictionary of moteState.StateNeighborsRow data for the link
+    """
+    
+    def __init__(self,linkData):
+        self.linkData = linkData
+        
+    def getHexAddr(self):
+        return linkData['addr']
+    
+    
 
 #============================ main ============================================
 
