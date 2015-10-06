@@ -9,6 +9,7 @@ import sys
 import os
 import traceback
 import types
+from threading import Timer
 
 if __name__=="__main__":
     # Update pythonpath if running in in-tree development mode
@@ -50,6 +51,7 @@ class OpenVisualizerCli2(Cmd):
                     command.
        :link:       Dictionary of links to remote motes from the active 
                     mote, where the key is the address of the remote.
+       :statsTimer: A timer to display link stats at a user-specified rate.
     """
         
     def __init__(self,app):
@@ -64,8 +66,13 @@ class OpenVisualizerCli2(Cmd):
         self.motes      = [mote(moteState) for moteState in self.app.moteStates]
         self.activeMote = None
         self.links      = {}
+        self.statsTimer = None
+        self.statsRows  = 0
         # Must turn off to avoid DAO messages, which may be frequent.
         self.app.rpl.showsInfoOnStdout = False
+        
+        # Number of rows to print before printing column headers again.
+        self.STATS_HEADING_ROWS = 20
         
     #======================== public ==========================================
     
@@ -100,10 +107,10 @@ class OpenVisualizerCli2(Cmd):
         self.links = {}
         try:
             nbrs = self.activeMote.ms.getStateElem(moteState.moteState.ST_NEIGHBORS).data
-            for row in nbrs:
-                if row.data:
-                    nbr  = row.data[0]
-                    addr = nbr['addr']
+            for nbr in nbrs:
+                if nbr.data:
+                    data  = nbr.data[0]
+                    addr = data['addr']
                     if addr and addr.addr:
                         addrStr = ''.join(["%.2x" % b for b in addr.addr[-2:]])
                         self.links[addrStr] = nbr
@@ -111,6 +118,39 @@ class OpenVisualizerCli2(Cmd):
                                                            self.activeMote.get16bHexAddr()))
         except ValueError:
             log.exception('ValueError when reading neighbor list')
+            
+    def _printStats(self, linkId, interval):
+        """Print link statistics. Supports use from a timer, which does
+        not require column headers with each request
+        
+        :param linkId: 16-bit ID for the remote mote, which is the key for
+                       the links dictionary.
+        :param interval: If a positive integer, repeats this print after
+                        the provided interval, in seconds.
+        """
+        log.debug('About to print stats for {0}'.format(linkId))
+        try:
+            link = self.links[linkId]
+            par  = (link.totalTxACK / float(link.totalTx)) if link.totalTx > 0 else 0
+
+            if self.statsRows % self.STATS_HEADING_ROWS == 0:
+                self.stdout.write('\n')
+                self.stdout.write('  UniTX  TXack   PAR  RSS  AllRX\n')
+                self.stdout.write('  -----  -----  ----  ---  -----\n')
+
+            self.stdout.write('  {0:5d}  {1:5d}  {2:4.2f}  {3:3d}  {4:5d}\n'.format(
+                                                                 link.totalTx,
+                                                                 link.totalTxACK,
+                                                                 par,
+                                                                 link.data[0]['rssi'].rssi,
+                                                                 link.totalRx))
+            self.statsRows += 1
+            if interval > 0:
+                self.statsTimer = Timer(interval, self._printStats, [linkId, interval])
+                self.statsTimer.start()
+
+        except KeyError:
+            self.stdout.write('link not found for stats\n')
 
     #===== callbacks
     
@@ -168,21 +208,41 @@ class OpenVisualizerCli2(Cmd):
             else:
                 self.stdout.write('No links found\n')
             
-        elif len(args) == 2 and args[0] == "stats":
-            link = self.links[args[1]]
-            if link:
-                numTx    = link['numTx']
-                numTxACK = link['numTxACK']
-                par      = (numTxACK / float(numTx)) if numTx > 0 else 0
-                
-                self.stdout.write('  AllRX  RSS  UniTX  TXack   PAR\n')
-                self.stdout.write('  -----  ---  -----  -----  ----\n')
-                self.stdout.write('  {0:5d}  {1:3d}  {2:5d}  {3:5d}  {4:4.2f}\n'.format(
-                                                                     link['numRx'], 
-                                                                     link['rssi'].rssi,
-                                                                     numTx,
-                                                                     numTxACK,
-                                                                     par))
+        elif len(args) == 2 and args[0] == "stats" and args[1] == "reset":
+            # Resets total for *all* links. First, update links to be sure 
+            # we include any new ones.
+            self._updateLinks()
+            if self.links:
+                for nbr in self.links.values():
+                    nbr.resetTotals()
+                        
+        elif len(args) == 2 and args[0] == "stats" and args[1] == "off":
+            if self.statsTimer:
+                self.statsTimer.cancel()
+                self.stdout.write('Canceled stats display\n')
+            else:
+                self.stdout.write('Nothing to do; stats display not repeating\n')
+            
+        elif len(args) >= 2 and args[0] == "stats":
+            if args[1] in self.links:
+                if len(args) == 2:
+                    self.statsRows = 0
+                    self._printStats(args[1], 0)
+                    
+                elif len(args) == 3:
+                    if args[2].isdigit():
+                        # Repeat print on the provided interval
+                        rate = int(args[2])
+                        if self.statsTimer:
+                            self.statsTimer.cancel()
+                        log.debug('Starting statsTimer at rate: {0}'.format(rate))
+                        self.statsRows  = 0
+                        self.statsTimer = Timer(0.1, self._printStats, [args[1], rate])
+                        self.statsTimer.start()
+                    else:
+                        self.do_help('link')
+                elif len(args) > 3:
+                    self.do_help('link')
             else:
                 self.stdout.write('link not found\n')
         else:
@@ -193,16 +253,16 @@ class OpenVisualizerCli2(Cmd):
               "link list          -- List linked motes",
               "link stats <remote-id> [frequency]",
               "                   -- Show statistics for the link to mote 'remote-id'.",
-              "                      Optionally, update the display every 'frequency' seconds",
-              "link stats off",
-              "link stats reset",
+              "                      Optionally, repeat the display every 'frequency' seconds",
+              "link stats off     -- Turns off repeating stats display",
+              "link stats reset   -- Resets totals for stats display",
               "",
               "Legend for stats output:",
-              "   AllRX     RSS      UniTX    TXack    PAR  ",
-              "  -------  --------  -------  -------  ------",
-              "  All RX   RSS for   Unicast  ACKed    TX pkt",
-              "  packets  last RX   TX       unicast  ACK   ",
-              "           packet    packets  TX pkts  rate  "))
+              "    UniTX    TXack    PAR      RSS     AllRX ",
+              "   -------  -------  ------  -------  -------",
+              "   Unicast  ACKed    TX pkt  RSS for  All RX ",
+              "   TX       unicast  ACK     last RX  packets",
+              "   packets  TX pkts  rate    packet           "))
               
     def do_cli(self, arg):
         args = arg.split()
@@ -256,6 +316,8 @@ class OpenVisualizerCli2(Cmd):
                         self.stdout.write('\n')
     
     def do_exit(self, arg):
+        if self.statsTimer:
+            self.statsTimer.cancel()
         self.app.close()
         # True means to stop CLI.
         return True

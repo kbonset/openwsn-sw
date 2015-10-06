@@ -228,11 +228,15 @@ class StateQueue(StateElem):
         self.data[9].update(notif.creator_9,notif.owner_9)
 
 class StateNeighborsRow(StateElem):
+    """Maintains totals for RX and TX that accumulate beyond the single
+    byte (max 255) used by firmware for routing purposes.
+    """
     
     def update(self,notif):
         StateElem.update(self)
         if len(self.data)==0:
             self.data.append({})
+            self.resetTotals()
         self.data[0]['used']                     = notif.used
         self.data[0]['parentPreference']         = notif.parentPreference
         self.data[0]['stableNeighbor']           = notif.stableNeighbor
@@ -247,15 +251,61 @@ class StateNeighborsRow(StateElem):
         if 'rssi' not in self.data[0]:
             self.data[0]['rssi']                 = typeRssi.typeRssi()
         self.data[0]['rssi'].update(notif.rssi)
+
+        try:
+            lastRx = self.data[0]['numRx']
+            if lastRx <= notif.numRx:
+                self.totalRx += notif.numRx - lastRx
+            else:
+                # numRx rolls over to 0
+                self.totalRx += (0xff - lastRx + 1) + notif.numRx
+        except KeyError:
+            # First pass just seeds the starting value for numRx
+            pass
         self.data[0]['numRx']                    = notif.numRx
+
+        try:
+            lastTx = self.data[0]['numTx']
+            if lastTx <= notif.numTx:
+                self.totalTx += notif.numTx - lastTx
+            else:
+                # Mirrors firmware, which uses this value to maintain RPL
+                # routes rather than totals _per se_. Can't first include
+                # (0xff - lastTx) in total because the firmware does not.
+                lastTx /= 2
+                if lastTx < notif.numTx:
+                    self.totalTx += notif.numTx - lastTx
+        except KeyError:
+            # First pass just seeds the starting value for numTx
+            pass
         self.data[0]['numTx']                    = notif.numTx
+
+        try:
+            lastTxACK = self.data[0]['numTxACK']
+            if lastTxACK <= notif.numTxACK:
+                self.totalTxACK += notif.numTxACK - lastTxACK
+            else:
+                # Mirrors firmware, which uses this value to maintain RPL
+                # routes rather than totals _per se_. Can't first include
+                # (0xff - lastTxACK) in total because the firmware does not.
+                lastTxACK /= 2
+                if lastTxACK < notif.numTxACK:
+                    self.totalTxACK += notif.numTxACK - lastTxACK
+        except KeyError:
+            # First pass just seeds the starting value for numTxACK
+            pass
         self.data[0]['numTxACK']                 = notif.numTxACK
+        
         self.data[0]['numWraps']                 = notif.numWraps
         if 'asn' not in self.data[0]:
             self.data[0]['asn']                  = typeAsn.typeAsn()
         self.data[0]['asn'].update(notif.asn_0_1,
                                    notif.asn_2_3,
                                    notif.asn_4)
+    def resetTotals(self):
+        self.totalRx = 0
+        self.totalTx = 0
+        self.totalTxACK = 0
 
 class StateIsSync(StateElem):
     
