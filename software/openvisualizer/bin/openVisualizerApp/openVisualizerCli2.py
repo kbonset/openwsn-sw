@@ -228,16 +228,27 @@ class OpenVisualizerCli2(Cmd):
                     break
             if not foundId:
                 self.stdout.write('mote-id not found or not usable\n')
+                
+        elif len(args) == 2 and args[0] == "channel":
+            if args[1].isdigit():
+                channel = int(args[1])
+                if channel != 0 and (channel < 11 or channel > 26):
+                    self.do_help('mote')
+            else:
+                self.do_help('mote')
 
+            cmd = [moteState.moteState.SET_COMMAND,'gd_root','channel',args[1]]
+            self.activeMote.ms.triggerAction(cmd)
         else:
             self.do_help('mote')
         
     def help_mote(self):
-        return("mote", ("Mote list, active mote, and mote settings",
+        return("mote", ("Mote lists, active mote, and mote settings",
               "mote list          -- List connected motes",
               "mote root          -- Make the active mote the DAG root",
               "mote set <mote-id> -- Set the active connected mote",
-              "mote links         -- List links for the active mote"))
+              "mote links         -- List links for the active mote",
+              "mote channel <n>   -- Set radio channel: 11-26, or 0 for channel hopping"))
               
     def do_stats(self, arg):
         args = arg.split()
@@ -264,6 +275,7 @@ class OpenVisualizerCli2(Cmd):
                 self.statsDevice = STATS_DEVICE_CONSOLE
             
         elif len(args) >= 2 and args[0] == "link":
+            self._updateLinks()
             if args[1] in self.links:
                 if len(args) == 2:
                     self.statsRows = 0
