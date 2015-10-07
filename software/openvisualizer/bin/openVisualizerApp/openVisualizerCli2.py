@@ -33,6 +33,13 @@ from   cmd         import Cmd
 import openVisualizerApp
 import openvisualizer.openvisualizer_utils as u
 
+# Number of rows to print before printing column headers again.
+STATS_HEADING_ROWS = 20
+
+# Constants for the output device for repeated stats
+STATS_DEVICE_CONSOLE = 0
+STATS_DEVICE_FILE    = 1
+STATS_FILE           = 'stats.out'
 
 class OpenVisualizerCli2(Cmd):
     """Interactive command line to monitor and manage the OpenVisualizer
@@ -45,13 +52,18 @@ class OpenVisualizerCli2(Cmd):
     help_cli() for an example.
     
     Attributes:
-       :motes:      List of connected motes
-       :activeMote: User-selected mote. Used as an implict target for commands
-                    so the user doesn't need to enter the mote ID for every
-                    command.
-       :link:       Dictionary of links to remote motes from the active 
-                    mote, where the key is the address of the remote.
-       :statsTimer: A timer to display link stats at a user-specified rate.
+       :motes:       List of connected motes
+       :activeMote:  User-selected mote. Used as an implict target for commands
+                     so the user doesn't need to enter the mote ID for every
+                     command.
+       :link:        Dictionary of links to remote motes from the active 
+                     mote, where the key is the address of the remote.
+       :statsTimer:  A timer to display link stats at a user-specified rate.
+       :statsRows:   Count of the number of rows printed for repeated stats
+                     output. Used to determine when to repeat the print of
+                     column headers.
+       :statsDevice: Identifier for the device used to output repeated stats
+                     -- console or file.
     """
         
     def __init__(self,app):
@@ -62,17 +74,15 @@ class OpenVisualizerCli2(Cmd):
         
         Cmd.__init__(self)
         self.prompt     = '> '
-        self.intro      = '\nOpenVisualizer CLI\n\n\'help [cmd]\' for command list'
+        self.intro      = '\nOpenVisualizer CLI\n\n\'help\' for command list'
         self.motes      = [mote(moteState) for moteState in self.app.moteStates]
         self.activeMote = None
         self.links      = {}
         self.statsTimer = None
         self.statsRows  = 0
+        self.statsDevice = STATS_DEVICE_CONSOLE
         # Must turn off to avoid DAO messages, which may be frequent.
         self.app.rpl.showsInfoOnStdout = False
-        
-        # Number of rows to print before printing column headers again.
-        self.STATS_HEADING_ROWS = 20
         
     #======================== public ==========================================
     
@@ -87,7 +97,7 @@ class OpenVisualizerCli2(Cmd):
 
     def emptyline(self):
         """Override to do nothing rather than repeat the last command, which
-        is counter-intuitive.
+        is not intuitive.
         """
         pass
     
@@ -121,36 +131,45 @@ class OpenVisualizerCli2(Cmd):
             
     def _printStats(self, linkId, interval):
         """Print link statistics. Supports use from a timer, which does
-        not require column headers with each request
+        not require column headers with each request.
         
         :param linkId: 16-bit ID for the remote mote, which is the key for
                        the links dictionary.
         :param interval: If a positive integer, repeats this print after
                         the provided interval, in seconds.
         """
-        log.debug('About to print stats for {0}'.format(linkId))
         try:
             link = self.links[linkId]
-            par  = (link.totalTxACK / float(link.totalTx)) if link.totalTx > 0 else 0
-
-            if self.statsRows % self.STATS_HEADING_ROWS == 0:
-                self.stdout.write('\n')
-                self.stdout.write('  UniTX  TXack   PAR  RSS  AllRX\n')
-                self.stdout.write('  -----  -----  ----  ---  -----\n')
-
-            self.stdout.write('  {0:5d}  {1:5d}  {2:4.2f}  {3:3d}  {4:5d}\n'.format(
-                                                                 link.totalTx,
-                                                                 link.totalTxACK,
-                                                                 par,
-                                                                 link.data[0]['rssi'].rssi,
-                                                                 link.totalRx))
-            self.statsRows += 1
-            if interval > 0:
-                self.statsTimer = Timer(interval, self._printStats, [linkId, interval])
-                self.statsTimer.start()
-
         except KeyError:
             self.stdout.write('link not found for stats\n')
+            return
+            
+        par  = (link.totalTxACK / float(link.totalTx)) if link.totalTx > 0 else 0
+        out  = None
+        try:
+            if self.statsDevice == STATS_DEVICE_FILE:
+                out = open(STATS_FILE, 'a')
+            else:
+                out = self.stdout
+                
+            if self.statsRows % STATS_HEADING_ROWS == 0:
+                out.write('\n')
+                out.write('  UniTX  TXack   PAR  RSS  AllRX\n')
+                out.write('  -----  -----  ----  ---  -----\n')
+            out.write('  {0:5d}  {1:5d}  {2:4.2f}  {3:3d}  {4:5d}\n'.format(
+                                                             link.totalTx,
+                                                             link.totalTxACK,
+                                                             par,
+                                                             link.data[0]['rssi'].rssi,
+                                                             link.totalRx))
+        finally:
+            if self.statsDevice == STATS_DEVICE_FILE and out:
+                out.close()
+                
+        self.statsRows += 1
+        if interval > 0:
+            self.statsTimer = Timer(interval, self._printStats, [linkId, interval])
+            self.statsTimer.start()
 
     #===== callbacks
     
@@ -176,6 +195,28 @@ class OpenVisualizerCli2(Cmd):
             else:
                 self.stdout.write('No action; must first select mote\n')
                 
+        elif len(args) == 1 and args[0] == "links":
+            if self.activeMote:
+                self._updateLinks()
+                if self.links:
+                    # Also include a link's IPv6 address, which is useful 
+                    # for an OS shell 'ping6' command.
+                    self.stdout.write(' ID             IPv6\n')
+                    self.stdout.write('----   -------------------------\n')
+                    for addr in self.links.keys():
+                        nbr      = self.links[addr]
+                        fullAddr = nbr.data[0]['addr']
+
+                        self.stdout.write(addr + '   bbbb:')
+                        for i in range(0,7,2):
+                            self.stdout.write(':{0:02x}{1:02x}'.format(fullAddr.addr[i],
+                                                                       fullAddr.addr[i+1]))
+                        self.stdout.write('\n')
+                else:
+                    self.stdout.write('No links found\n')
+            else:
+                self.stdout.write('No action; must first select mote\n')
+                
         elif len(args) == 2 and args[0] == "set":
             foundId = False
             for mote in self.motes:
@@ -195,20 +236,13 @@ class OpenVisualizerCli2(Cmd):
         return("mote", ("Mote list, active mote, and mote settings",
               "mote list          -- List connected motes",
               "mote root          -- Make the active mote the DAG root",
-              "mote set <mote-id> -- Set the active connected mote"))
+              "mote set <mote-id> -- Set the active connected mote",
+              "mote links         -- List links for the active mote"))
               
-    def do_link(self, arg):
+    def do_stats(self, arg):
         args = arg.split()
 
-        if len(args) >= 1 and args[0] == "list":
-            self._updateLinks()
-            if self.links:
-                for addr in self.links.keys():
-                    self.stdout.write(addr + '\n')
-            else:
-                self.stdout.write('No links found\n')
-            
-        elif len(args) == 2 and args[0] == "stats" and args[1] == "reset":
+        if len(args) == 1 and args[0] == "reset":
             # Resets total for *all* links. First, update links to be sure 
             # we include any new ones.
             self._updateLinks()
@@ -216,46 +250,55 @@ class OpenVisualizerCli2(Cmd):
                 for nbr in self.links.values():
                     nbr.resetTotals()
                         
-        elif len(args) == 2 and args[0] == "stats" and args[1] == "off":
+        elif len(args) == 1 and args[0] == "off":
             if self.statsTimer:
                 self.statsTimer.cancel()
                 self.stdout.write('Canceled stats display\n')
             else:
                 self.stdout.write('Nothing to do; stats display not repeating\n')
+                        
+        elif len(args) == 2 and args[0] == "device":
+            if args[1] == "file":
+                self.statsDevice = STATS_DEVICE_FILE
+            else:
+                self.statsDevice = STATS_DEVICE_CONSOLE
             
-        elif len(args) >= 2 and args[0] == "stats":
+        elif len(args) >= 2 and args[0] == "link":
             if args[1] in self.links:
                 if len(args) == 2:
                     self.statsRows = 0
                     self._printStats(args[1], 0)
                     
                 elif len(args) == 3:
-                    if args[2].isdigit():
+                    if args[1].isdigit():
                         # Repeat print on the provided interval
                         rate = int(args[2])
                         if self.statsTimer:
                             self.statsTimer.cancel()
-                        log.debug('Starting statsTimer at rate: {0}'.format(rate))
+                        if self.statsDevice == STATS_DEVICE_FILE:
+                            self.stdout.write('Stats output to file \'stats.out\'\n')
                         self.statsRows  = 0
+                        # Delay for an instant so output appears after the next prompt.
                         self.statsTimer = Timer(0.1, self._printStats, [args[1], rate])
                         self.statsTimer.start()
                     else:
-                        self.do_help('link')
+                        self.do_help('stats')
                 elif len(args) > 3:
-                    self.do_help('link')
+                    self.do_help('stats')
             else:
                 self.stdout.write('link not found\n')
         else:
-            self.do_help('link')
+            self.do_help('stats')
         
-    def help_link(self):
-        return("link", ("Link list and stats for a link to the selected mote",
-              "link list          -- List linked motes",
-              "link stats <remote-id> [frequency]",
-              "                   -- Show statistics for the link to mote 'remote-id'.",
-              "                      Optionally, repeat the display every 'frequency' seconds",
-              "link stats off     -- Turns off repeating stats display",
-              "link stats reset   -- Resets totals for stats display",
+    def help_stats(self):
+        return("stats", ("Stats for a link to the selected mote",
+              "stats link <remote-id> [frequency]",
+              "              -- Show statistics for the link to mote 'remote-id'.",
+              "                 Optionally, repeat the display every 'frequency' seconds",
+              "stats device [console|file (stats.out)]",
+              "              -- Appends repeating stats to the specified output device",
+              "stats off     -- Turns off repeating stats display",
+              "stats reset   -- Resets totals for stats display",
               "",
               "Legend for stats output:",
               "    UniTX    TXack    PAR      RSS     AllRX ",
@@ -292,6 +335,7 @@ class OpenVisualizerCli2(Cmd):
         cliNames = self.get_names()
         cliNames.sort()
         if not arg:
+            self.stdout.write('\'help [cmd]\' for details\n')
             self.stdout.write(' Commands                      Description                                  \n')
             self.stdout.write('----------  ---------------------------------------------------------------\n')
         for name in cliNames:
