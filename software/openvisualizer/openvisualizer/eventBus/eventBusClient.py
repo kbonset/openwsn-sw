@@ -147,10 +147,10 @@ class eventBusClient(object):
         elif type(s1)==type(s2)==tuple:
             assert len(s1)==len(s2)==3
             for i in range(3):
-                if (s1[i]==s2[i]) or (s1[i]==self.WILDCARD) or (s2[i]==self.WILDCARD):
-                    return True
-                else:
+                if (s1[i]!=s2[i]) and (s1[i]!=self.WILDCARD) and (s2[i]!=self.WILDCARD):
                     return False
+            else:
+                return True
         return False
     
     
