@@ -54,15 +54,8 @@ class ParserData(Parser.Parser):
         asnbytes=input[2:7]
         (self._asn) = struct.unpack('<BHH',''.join([chr(c) for c in asnbytes]))
         
-        #source and destination of the message
-        dest = input[7:15]
-        
         #source is elided!!! so it is not there.. check that.
-        source = input[15:23]
-        
-        if log.isEnabledFor(logging.DEBUG):
-            a="".join(hex(c) for c in dest)
-            log.debug("destination address of the packet is {0} ".format(a))
+        source = input[7:15]
         
         if log.isEnabledFor(logging.DEBUG):
             a="".join(hex(c) for c in source)
@@ -71,7 +64,7 @@ class ParserData(Parser.Parser):
         # remove asn src and dest and mote id at the beginning.
         # this is a hack for latency measurements... TODO, move latency to an app listening on the corresponding port.
         # inject end_asn into the packet as well
-        input = input[23:]
+        input = input[15:]
         
         if log.isEnabledFor(logging.DEBUG):
             log.debug("packet without source,dest and asn {0}".format(input))

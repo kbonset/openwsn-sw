@@ -729,7 +729,7 @@ class OpenLbr(eventBusClient.eventBusClient):
                 a1 = pkt_lowpan[ptr]
                 a2 = pkt_lowpan[ptr+1]
                 ptr = ptr+2
-                s = ''.join(['\x00','\x00','\x00','\x00','\x00','\x00',a1,a2])
+                s = [0,0,0,0xFF,0xFE,0,a1,a2]
                 pkt_ipv6['src_addr'] = self.networkPrefix+s
         
             elif sam == self.IPHC_SAM_64B:
@@ -751,8 +751,8 @@ class OpenLbr(eventBusClient.eventBusClient):
                 a1 = pkt_lowpan[ptr]
                 a2 = pkt_lowpan[ptr+1]
                 ptr = ptr+2
-                s = ''.join(['\x00','\x00','\x00','\x00','\x00','\x00',a1,a2])
-                pkt_ipv6['dst_addr'] = self.networPrefix+s
+                s = [0,0,0,0xFF,0xFE,0,a1,a2]
+                pkt_ipv6['dst_addr'] = self.networkPrefix+s
             elif dam == self.IPHC_DAM_64B:
                 pkt_ipv6['dst_addr'] = self.networkPrefix+pkt_lowpan[ptr:ptr+8]
                 ptr = ptr + 8
